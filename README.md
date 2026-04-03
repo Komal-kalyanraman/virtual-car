@@ -36,22 +36,88 @@ This project simulates a multi-network vehicle architecture with a gateway ECU t
 
 ## Architecture Overview
 
+This project uses **two protocol stacks** bridged by the Gateway ECU:
+
+- **CAN side** (BCM/IVI ↔ Gateway): Virtual CAN bus `vcan0` → ISO-TP transport → UDS application layer
+- **IP side** (Gateway ↔ Sensor ECU): TCP socket → DoIP transport → UDS application layer
+
+### Component Roles
+
+| Component      | Role                                               | Protocol                      |
+| -------------- | -------------------------------------------------- | ----------------------------- |
+| **Sensor ECU** | Data source — generates random speed & temperature | DoIP/TCP server on port 13400 |
+| **Gateway**    | Protocol bridge — translates CAN ↔ DoIP            | ISO-TP/CAN + DoIP/TCP client  |
+| **BCM**        | UDS client — reads vehicle speed every 100ms       | ISO-TP/CAN                    |
+| **IVI**        | UDS client + GUI — reads cabin temp every 3s       | ISO-TP/CAN                    |
+
+### High-Level Sequence Diagram
+
 ```mermaid
 sequenceDiagram
-    participant IVI as CAN Client (IVI/BCM)
-    participant GW as Gateway ECU
-    participant SENSOR as Sensor ECU (DoIP)
+    participant BCM as BCM / IVI<br/>(CAN Client)
+    participant GW as Gateway ECU<br/>(CAN ↔ DoIP bridge)
+    participant SENSOR as Sensor ECU<br/>(DoIP Server)
 
-    IVI->>GW: UDS request (CAN/ISO-TP)
-    GW->>SENSOR: UDS request (DoIP/TCP)
-    SENSOR-->>GW: UDS response (DoIP/TCP)
-    GW-->>IVI: UDS response (CAN/ISO-TP)
+    Note over BCM,GW: CAN bus (vcan0) — ISO-TP transport
+    Note over GW,SENSOR: Ethernet — DoIP/TCP transport
+
+    BCM->>GW: UDS ReadDataByIdentifier (CAN/ISO-TP)
+    GW->>SENSOR: UDS ReadDataByIdentifier (DoIP/TCP)
+    SENSOR-->>GW: UDS Positive Response (DoIP/TCP)
+    GW-->>BCM: UDS Positive Response (CAN/ISO-TP)
 ```
 
-- CAN clients send UDS requests to the gateway over CAN.
-- The gateway forwards UDS requests to the sensor ECU over DoIP (Ethernet TCP).
-- The sensor ECU responds with simulated data (vehicle speed, cabin temp) over DoIP.
-- The gateway relays the response back to the CAN client.
+### UDS Byte-Level Sequence Diagram
+
+This diagram shows the exact bytes exchanged when BCM requests vehicle speed (DID `0xF190`):
+
+```mermaid
+sequenceDiagram
+    participant BCM as BCM
+    participant GW as Gateway
+    participant SENSOR as Sensor ECU
+
+    Note over BCM,GW: ISO-TP frame over vcan0<br/>txid=0x7E0, rxid=0x7E8
+    BCM->>GW: 22 F1 90<br/>(SID=0x22 ReadDataByIdentifier, DID=0xF190)
+
+    Note over GW,SENSOR: DoIP frame over TCP 127.0.0.1:13400<br/>Header: ver=0x02, type=0x8001, len=7<br/>Payload: src=0x0E00, dst=0x0A00 + UDS
+    GW->>SENSOR: DoIP[ src=0x0E00 dst=0x0A00 | 22 F1 90 ]
+
+    Note over SENSOR: Reads global vehicle_speed variable<br/>e.g. 150 → 0x0096
+    SENSOR-->>GW: DoIP[ src=0x0A00 dst=0x0E00 | 62 F1 90 00 96 ]
+
+    Note over GW,BCM: Strips DoIP header, returns raw UDS bytes
+    GW-->>BCM: 62 F1 90 00 96<br/>(SID=0x62 PositiveResponse, DID=0xF190, value=150 km/h)
+
+    Note over BCM: UInt16DidCodec decodes 0x0096 → 150<br/>Prints: "Vehicle Speed: 150 km/h"
+```
+
+### IVI Cabin Temperature Flow
+
+Same flow but for DID `0xF191` (cabin temperature), with IVI updating a Tkinter GUI label instead of printing:
+
+```mermaid
+sequenceDiagram
+    participant IVI as IVI (GUI thread + reader thread)
+    participant GW as Gateway
+    participant SENSOR as Sensor ECU
+
+    Note over IVI: Background thread calls<br/>ReadDataByIdentifier every 3s
+    IVI->>GW: 22 F1 91<br/>(DID=0xF191 CabinTemp, over CAN/ISO-TP)
+    GW->>SENSOR: DoIP[ 22 F1 91 ]
+    SENSOR-->>GW: DoIP[ 62 F1 91 00 19 ]<br/>(value=25°C)
+    GW-->>IVI: 62 F1 91 00 19
+
+    Note over IVI: Uses root.after(0, update_temp, 25)<br/>to safely push update to Tkinter main thread<br/>Dashboard label shows: "Cabin Temperature: 25 °C"
+```
+
+### UDS Negative Response Codes Used
+
+| NRC                    | Hex    | Meaning               | When triggered        |
+| ---------------------- | ------ | --------------------- | --------------------- |
+| serviceNotSupported    | `0x11` | Service not supported | SID is not `0x22`     |
+| requestOutOfRange      | `0x31` | DID not recognized    | Unknown DID requested |
+| incorrectMessageLength | `0x13` | Empty request         | Empty UDS payload     |
 
 ## Run Sequence
 
