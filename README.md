@@ -6,7 +6,7 @@ This project simulates a multi-network vehicle architecture with a gateway ECU t
 
 - **sensor-ecu/**: Contains `sensor.py`, which acts as a sensor ECU providing vehicle speed and cabin temperature data as a UDS server over DoIP (Ethernet).
 - **gateway/**: Contains `gateway.py`, which acts as a simulated vehicle gateway ECU. It receives UDS requests over CAN and forwards them to the sensor ECU over Ethernet (DoIP), then relays the response back over CAN.
-- **ivi/**: Contains `ivi.py`, which acts as a UDS client (e.g., an IVI or diagnostic tool) requesting and displaying the cabin temperature over CAN.
+- **ivi/**: Contains `ivi.py`, which acts as a UDS client (e.g., an IVI or diagnostic tool) requesting and displaying the cabin temperature over DoIP (Ethernet) to the Gateway.
 - **bcm/**: (Optional) Can be used for a second client, e.g., to request vehicle speed over CAN.
 - **SETUP.md**: Step-by-step setup and run instructions.
 
@@ -38,33 +38,40 @@ This project simulates a multi-network vehicle architecture with a gateway ECU t
 
 This project uses **two protocol stacks** bridged by the Gateway ECU:
 
-- **CAN side** (BCM/IVI ↔ Gateway): Virtual CAN bus `vcan0` → ISO-TP transport → UDS application layer
-- **IP side** (Gateway ↔ Sensor ECU): TCP socket → DoIP transport → UDS application layer
+- **CAN side** (BCM ↔ Gateway): Virtual CAN bus `vcan0` → ISO-TP transport → UDS application layer
+- **IP side** (IVI ↔ Gateway ↔ Sensor ECU): TCP socket → DoIP transport → UDS application layer
 
 ### Component Roles
 
-| Component      | Role                                               | Protocol                      |
-| -------------- | -------------------------------------------------- | ----------------------------- |
-| **Sensor ECU** | Data source — generates random speed & temperature | DoIP/TCP server on port 13400 |
-| **Gateway**    | Protocol bridge — translates CAN ↔ DoIP            | ISO-TP/CAN + DoIP/TCP client  |
-| **BCM**        | UDS client — reads vehicle speed every 100ms       | ISO-TP/CAN                    |
-| **IVI**        | UDS client + GUI — reads cabin temp every 3s       | ISO-TP/CAN                    |
+| Component      | Role                                               | Protocol                            |
+| -------------- | -------------------------------------------------- | ----------------------------------- |
+| **Sensor ECU** | Data source — generates random speed & temperature | DoIP/TCP server on port 13400       |
+| **Gateway**    | Protocol bridge — translates CAN ↔ DoIP            | ISO-TP/CAN + DoIP/TCP client/server |
+| **BCM**        | UDS client — reads vehicle speed every 100ms       | ISO-TP/CAN                          |
+| **IVI**        | UDS client + GUI — reads cabin temp every 3s       | DoIP/TCP client to Gateway          |
 
 ### High-Level Sequence Diagram
 
 ```mermaid
 sequenceDiagram
-    participant BCM as BCM / IVI<br/>(CAN Client)
-    participant GW as Gateway ECU<br/>(CAN ↔ DoIP bridge)
-    participant SENSOR as Sensor ECU<br/>(DoIP Server)
+  participant BCM as BCM (CAN Client)
+  participant IVI as IVI (DoIP Client)
+  participant GW as Gateway ECU
+  participant SENSOR as Sensor ECU
 
-    Note over BCM,GW: CAN bus (vcan0) — ISO-TP transport
-    Note over GW,SENSOR: Ethernet — DoIP/TCP transport
+  Note over BCM,GW: CAN bus (vcan0) — ISO-TP transport
+  Note over IVI,GW: Ethernet — DoIP/TCP port 15000
+  Note over GW,SENSOR: Ethernet — DoIP/TCP port 13400
 
-    BCM->>GW: UDS ReadDataByIdentifier (CAN/ISO-TP)
-    GW->>SENSOR: UDS ReadDataByIdentifier (DoIP/TCP)
-    SENSOR-->>GW: UDS Positive Response (DoIP/TCP)
-    GW-->>BCM: UDS Positive Response (CAN/ISO-TP)
+  BCM->>GW: UDS ReadDataByIdentifier (CAN/ISO-TP)
+  GW->>SENSOR: UDS ReadDataByIdentifier (DoIP/TCP)
+  SENSOR-->>GW: UDS Positive Response (DoIP/TCP)
+  GW-->>BCM: UDS Positive Response (CAN/ISO-TP)
+
+  IVI->>GW: UDS ReadDataByIdentifier (DoIP/TCP)
+  GW->>SENSOR: UDS ReadDataByIdentifier (DoIP/TCP)
+  SENSOR-->>GW: UDS Positive Response (DoIP/TCP)
+  GW-->>IVI: UDS Positive Response (DoIP/TCP)
 ```
 
 ### UDS Byte-Level Sequence Diagram
@@ -92,23 +99,23 @@ sequenceDiagram
     Note over BCM: UInt16DidCodec decodes 0x0096 → 150<br/>Prints: "Vehicle Speed: 150 km/h"
 ```
 
-### IVI Cabin Temperature Flow
+### IVI Cabin Temperature Flow (Over DoIP)
 
-Same flow but for DID `0xF191` (cabin temperature), with IVI updating a Tkinter GUI label instead of printing:
+For DID `0xF191` (cabin temperature), IVI communicates with Gateway over DoIP (TCP port 15000), and the Gateway forwards the request to the Sensor ECU over DoIP (TCP port 13400):
 
 ```mermaid
 sequenceDiagram
-    participant IVI as IVI (GUI thread + reader thread)
-    participant GW as Gateway
-    participant SENSOR as Sensor ECU
+  participant IVI as IVI (GUI thread + reader thread)
+  participant GW as Gateway
+  participant SENSOR as Sensor ECU
 
-    Note over IVI: Background thread calls<br/>ReadDataByIdentifier every 3s
-    IVI->>GW: 22 F1 91<br/>(DID=0xF191 CabinTemp, over CAN/ISO-TP)
-    GW->>SENSOR: DoIP[ 22 F1 91 ]
-    SENSOR-->>GW: DoIP[ 62 F1 91 00 19 ]<br/>(value=25°C)
-    GW-->>IVI: 62 F1 91 00 19
+  Note over IVI: Background thread calls<br/>ReadDataByIdentifier every 3s
+  IVI->>GW: 22 F1 91<br/>(DID=0xF191 CabinTemp, over DoIP/TCP)
+  GW->>SENSOR: DoIP[ 22 F1 91 ]
+  SENSOR-->>GW: DoIP[ 62 F1 91 00 19 ]<br/>(value=25°C)
+  GW-->>IVI: DoIP[ 62 F1 91 00 19 ]
 
-    Note over IVI: Uses root.after(0, update_temp, 25)<br/>to safely push update to Tkinter main thread<br/>Dashboard label shows: "Cabin Temperature: 25 °C"
+  Note over IVI: Uses root.after(0, update_temp, 25)<br/>to safely push update to Tkinter main thread<br/>Dashboard label shows: "Cabin Temperature: 25 °C"
 ```
 
 ### UDS Negative Response Codes Used
@@ -136,14 +143,14 @@ sequenceDiagram
    python3 gateway.py
    ```
 
-3. **Start the CAN clients (e.g., IVI or BCM):**
+3. **Start the clients:**
    Open a new terminal for each client, activate your virtual environment if needed:
-   - For IVI (cabin temperature):
+   - For IVI (cabin temperature, over DoIP):
      ```sh
      cd ivi
      python3 ivi.py
      ```
-   - For BCM (vehicle speed):
+   - For BCM (vehicle speed, CAN):
      ```sh
      cd bcm
      python3 bcm.py
@@ -152,6 +159,7 @@ sequenceDiagram
 **Note:**
 
 - Always start the sensor ECU first, then the gateway, then the clients.
+- IVI communicates with the Gateway over DoIP (TCP port 15000).
 - All components must use the same Python environment and required packages.
 
 ## Getting Started

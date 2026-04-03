@@ -1,61 +1,119 @@
-import time
-import isotp
+import socket
+import struct
 import threading
+import time
 import tkinter as tk
-
-from udsoncan.client import Client
-from udsoncan.connections import IsoTPConnection
-from udsoncan import configs
-from udsoncan.common.DidCodec import DidCodec
 
 DID_CABIN_TEMP = 0xF191
 
-class UInt16DidCodec(DidCodec):
-    def encode(self, val):
-        return int(val).to_bytes(2, byteorder="big", signed=False)
-    def decode(self, payload):
-        return int.from_bytes(payload, byteorder="big", signed=False)
-    def __len__(self):
-        return 2
+DOIP_VERSION = 0x02
+DOIP_INVERSE_VERSION = 0xFD
+DOIP_PAYLOAD_DIAG_MSG = 0x8001
+
+IVI_LOGICAL_ADDR = 0x0B00
+GW_LOGICAL_ADDR = 0x0E00
+GATEWAY_HOST = "127.0.0.1"
+GATEWAY_PORT = 15000
+
+
+def build_doip_diag_frame(source_addr, target_addr, uds_payload):
+    payload = struct.pack("!HH", source_addr, target_addr) + uds_payload
+    header = struct.pack(
+        "!BBHI",
+        DOIP_VERSION,
+        DOIP_INVERSE_VERSION,
+        DOIP_PAYLOAD_DIAG_MSG,
+        len(payload),
+    )
+    return header + payload
+
+
+def recv_exact(sock, size):
+    data = b""
+    while len(data) < size:
+        chunk = sock.recv(size - len(data))
+        if not chunk:
+            raise ConnectionError("Socket closed")
+        data += chunk
+    return data
+
+
+def recv_doip_diag(sock):
+    header = recv_exact(sock, 8)
+    version, inverse_version, payload_type, payload_len = struct.unpack("!BBHI", header)
+
+    if version != DOIP_VERSION or inverse_version != DOIP_INVERSE_VERSION:
+        raise ValueError("Invalid DoIP version")
+    if payload_type != DOIP_PAYLOAD_DIAG_MSG:
+        raise ValueError(f"Unsupported payload type: 0x{payload_type:04X}")
+
+    payload = recv_exact(sock, payload_len)
+    if len(payload) < 4:
+        raise ValueError("Diagnostic payload too short")
+
+    source_addr, target_addr = struct.unpack("!HH", payload[:4])
+    uds_payload = payload[4:]
+    return source_addr, target_addr, uds_payload
+
 
 class Dashboard:
     def __init__(self, root):
         self.root = root
-        self.root.title("Vehicle Dashboard - Cabin Temperature")
-        self.label = tk.Label(root, text="Cabin Temperature: -- °C", font=("Arial", 32))
+        self.root.title("Vehicle Dashboard - Cabin Temperature (DoIP)")
+        self.label = tk.Label(root, text="Cabin Temperature: -- C", font=("Arial", 32))
         self.label.pack(padx=40, pady=40)
-        self.temp = "--"
 
     def update_temp(self, temp):
-        self.temp = temp
-        self.label.config(text=f"Cabin Temperature: {temp} °C")
+        self.label.config(text=f"Cabin Temperature: {temp} C")
+
+    def show_unavailable(self):
+        self.label.config(text="Cabin Temperature: -- C")
+
 
 def uds_temp_reader(dashboard):
-    address = isotp.Address(
-        isotp.AddressingMode.Normal_11bits,
-        txid=0x7E0,
-        rxid=0x7E8,
-    )
-    conn = IsoTPConnection("vcan0", address=address, params={"use_socketcan": True})
-    client_config = dict(configs.default_client_config)
-    client_config["data_identifiers"] = {
-        DID_CABIN_TEMP: UInt16DidCodec(),
-    }
-    with Client(conn, request_timeout=2, config=client_config) as client:
-        while True:
-            try:
-                response = client.read_data_by_identifier(DID_CABIN_TEMP)
-                temp = response.service_data.values[DID_CABIN_TEMP]
-                dashboard.root.after(0, dashboard.update_temp, temp)
-            except Exception as e:
-                dashboard.root.after(0, dashboard.update_temp, "--")
-            time.sleep(3)
+    while True:
+        try:
+            with socket.create_connection((GATEWAY_HOST, GATEWAY_PORT), timeout=2.0) as sock:
+                sock.settimeout(2.0)
+                print(f"Connected to gateway DoIP {GATEWAY_HOST}:{GATEWAY_PORT}")
+
+                while True:
+                    # UDS ReadDataByIdentifier for cabin temp DID 0xF191
+                    uds_request = bytes([0x22, 0xF1, 0x91])
+                    frame = build_doip_diag_frame(IVI_LOGICAL_ADDR, GW_LOGICAL_ADDR, uds_request)
+                    sock.sendall(frame)
+
+                    source_addr, target_addr, uds_response = recv_doip_diag(sock)
+
+                    ok = (
+                        source_addr == GW_LOGICAL_ADDR
+                        and target_addr == IVI_LOGICAL_ADDR
+                        and len(uds_response) >= 5
+                        and uds_response[0] == 0x62
+                        and uds_response[1] == 0xF1
+                        and uds_response[2] == 0x91
+                    )
+
+                    if ok:
+                        temp = int.from_bytes(uds_response[3:5], byteorder="big", signed=False)
+                        dashboard.root.after(0, dashboard.update_temp, temp)
+                    else:
+                        dashboard.root.after(0, dashboard.show_unavailable)
+
+                    time.sleep(3)
+
+        except Exception as exc:
+            print(f"IVI DoIP error: {exc}")
+            dashboard.root.after(0, dashboard.show_unavailable)
+            time.sleep(1)
+
 
 def main():
     root = tk.Tk()
     dashboard = Dashboard(root)
     threading.Thread(target=uds_temp_reader, args=(dashboard,), daemon=True).start()
     root.mainloop()
+
 
 if __name__ == "__main__":
     main()
