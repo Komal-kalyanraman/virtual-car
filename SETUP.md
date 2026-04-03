@@ -6,7 +6,7 @@ This project simulates a vehicle gateway and IVI (In-Vehicle Infotainment) syste
 
 - Python 3.8+
 - Linux OS (for virtual CAN)
-- `python-can`, `can-isotp`, and `uds` Python packages
+- `python-can`, `python-can-isotp`, and `udsoncan` Python packages
 
 ## Setup Instructions
 
@@ -29,6 +29,7 @@ source venv/bin/activate
 ```sh
 pip install python-can
 pip install git+https://github.com/pylessard/python-can-isotp.git
+pip install udsoncan
 ```
 
 ### 4. Set Up the Virtual CAN Interface
@@ -53,4 +54,10 @@ Open a new terminal, activate the virtual environment, then:
 ```sh
 cd ivi
 python ivi.py
+```
+
+### 7. Installl Tkinter across PC
+
+```sh
+sudo apt-get install python3-tk
 ```
