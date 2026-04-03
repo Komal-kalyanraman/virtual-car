@@ -1,8 +1,7 @@
+import os
 import socket
 import struct
-import threading
 import time
-import tkinter as tk
 
 DID_CABIN_TEMP = 0xF191
 
@@ -15,7 +14,6 @@ GW_LOGICAL_ADDR = 0x0E00
 GATEWAY_HOST = "127.0.0.1"
 GATEWAY_PORT = 15000
 
-
 def build_doip_diag_frame(source_addr, target_addr, uds_payload):
     payload = struct.pack("!HH", source_addr, target_addr) + uds_payload
     header = struct.pack(
@@ -27,7 +25,6 @@ def build_doip_diag_frame(source_addr, target_addr, uds_payload):
     )
     return header + payload
 
-
 def recv_exact(sock, size):
     data = b""
     while len(data) < size:
@@ -37,11 +34,9 @@ def recv_exact(sock, size):
         data += chunk
     return data
 
-
 def recv_doip_diag(sock):
     header = recv_exact(sock, 8)
     version, inverse_version, payload_type, payload_len = struct.unpack("!BBHI", header)
-
     if version != DOIP_VERSION or inverse_version != DOIP_INVERSE_VERSION:
         raise ValueError("Invalid DoIP version")
     if payload_type != DOIP_PAYLOAD_DIAG_MSG:
@@ -55,22 +50,8 @@ def recv_doip_diag(sock):
     uds_payload = payload[4:]
     return source_addr, target_addr, uds_payload
 
-
-class Dashboard:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Vehicle Dashboard - Cabin Temperature (DoIP)")
-        self.label = tk.Label(root, text="Cabin Temperature: -- C", font=("Arial", 32))
-        self.label.pack(padx=40, pady=40)
-
-    def update_temp(self, temp):
-        self.label.config(text=f"Cabin Temperature: {temp} C")
-
-    def show_unavailable(self):
-        self.label.config(text="Cabin Temperature: -- C")
-
-
-def uds_temp_reader(dashboard):
+def main():
+    show_fahrenheit = False
     while True:
         try:
             with socket.create_connection((GATEWAY_HOST, GATEWAY_PORT), timeout=2.0) as sock:
@@ -78,6 +59,12 @@ def uds_temp_reader(dashboard):
                 print(f"Connected to gateway DoIP {GATEWAY_HOST}:{GATEWAY_PORT}")
 
                 while True:
+                    # Check for update trigger
+                    if os.path.exists("/tmp/ivi_update.flag"):
+                        show_fahrenheit = True
+                        os.remove("/tmp/ivi_update.flag")
+                        print("IVI: Switched to Fahrenheit display due to TCU update trigger.")
+
                     # UDS ReadDataByIdentifier for cabin temp DID 0xF191
                     uds_request = bytes([0x22, 0xF1, 0x91])
                     frame = build_doip_diag_frame(IVI_LOGICAL_ADDR, GW_LOGICAL_ADDR, uds_request)
@@ -96,24 +83,20 @@ def uds_temp_reader(dashboard):
 
                     if ok:
                         temp = int.from_bytes(uds_response[3:5], byteorder="big", signed=False)
-                        dashboard.root.after(0, dashboard.update_temp, temp)
+                        if show_fahrenheit:
+                            temp_f = round((temp * 9 / 5) + 32)
+                            print(f"Cabin Temperature: {temp_f} F")
+                        else:
+                            print(f"Cabin Temperature: {temp} C")
                     else:
-                        dashboard.root.after(0, dashboard.show_unavailable)
+                        print("Cabin Temperature: --")
 
                     time.sleep(3)
 
         except Exception as exc:
             print(f"IVI DoIP error: {exc}")
-            dashboard.root.after(0, dashboard.show_unavailable)
+            print("Cabin Temperature: --")
             time.sleep(1)
-
-
-def main():
-    root = tk.Tk()
-    dashboard = Dashboard(root)
-    threading.Thread(target=uds_temp_reader, args=(dashboard,), daemon=True).start()
-    root.mainloop()
-
 
 if __name__ == "__main__":
     main()

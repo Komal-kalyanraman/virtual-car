@@ -3,6 +3,7 @@ import struct
 import threading
 import time
 
+import os
 import can
 import isotp
 
@@ -85,6 +86,18 @@ def process_uds_request(uds_request):
 
     sid = uds_request[0]
 
+    # Custom update triggers
+    if sid == 0x2E and len(uds_request) >= 4:
+        did = (uds_request[1] << 8) | uds_request[2]
+        if did == 0xF1A1:  # BCM update
+            with open("/tmp/bcm_update.flag", "w") as f:
+                f.write("1")
+            return bytes([0x6E, uds_request[1], uds_request[2], uds_request[3]])
+        elif did == 0xF1A2:  # IVI update
+            with open("/tmp/ivi_update.flag", "w") as f:
+                f.write("1")
+            return bytes([0x6E, uds_request[1], uds_request[2], uds_request[3]])
+
     # Demo gateway supports only ReadDataByIdentifier (0x22)
     if sid != 0x22:
         return build_negative_response(sid, 0x11)  # serviceNotSupported
@@ -94,7 +107,7 @@ def process_uds_request(uds_request):
         return forward_uds_to_sensor_over_doip(uds_request)
     except Exception as exc:
         print(f"DoIP forward error: {exc}")
-        return build_negative_response(sid, 0x7F)  # serviceNotSupportedInActiveSession (used as transport error)
+        return build_negative_response(sid, 0x7F)
 
 
 def can_worker():

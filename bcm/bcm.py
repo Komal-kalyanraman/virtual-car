@@ -1,3 +1,4 @@
+import os
 import time
 import isotp
 
@@ -28,14 +29,19 @@ def main():
         DID_VEHICLE_SPEED: UInt16DidCodec(),
     }
     with Client(conn, request_timeout=2, config=client_config) as client:
+        sleep_time = 0.1
         while True:
             try:
+                if os.path.exists("/tmp/bcm_update.flag"):
+                    sleep_time = 1.0
+                    os.remove("/tmp/bcm_update.flag")
+                    print("BCM: Data rate changed to 1000ms due to TCU update trigger.")
                 response = client.read_data_by_identifier(DID_VEHICLE_SPEED)
                 speed = response.service_data.values[DID_VEHICLE_SPEED]
                 print(f"Vehicle Speed: {speed} km/h")
             except Exception as e:
                 print("Error reading vehicle speed:", e)
-            time.sleep(0.1)
+            time.sleep(sleep_time)
 
 if __name__ == "__main__":
     main()
