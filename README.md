@@ -6,8 +6,9 @@ This project simulates a multi-network vehicle architecture with a gateway ECU t
 
 - **sensor-ecu/**: Contains `sensor.py`, which acts as a sensor ECU providing vehicle speed and cabin temperature data as a UDS server over DoIP (Ethernet).
 - **gateway/**: Contains `gateway.py`, which acts as a simulated vehicle gateway ECU. It receives UDS requests over CAN and forwards them to the sensor ECU over Ethernet (DoIP), then relays the response back over CAN.
-- **ivi/**: Contains `ivi.py`, which acts as a UDS client (e.g., an IVI or diagnostic tool) requesting and displaying the cabin temperature over DoIP (Ethernet) to the Gateway.
-- **bcm/**: (Optional) Can be used for a second client, e.g., to request vehicle speed over CAN.
+- **ivi/**: Contains `ivi.py`, which acts as a UDS client requesting cabin temperature over DoIP (Ethernet) to the Gateway and printing values to the console.
+- **bcm/**: Contains `bcm.py`, which reads vehicle speed over CAN and supports runtime update behavior via a trigger file.
+- **tcu/**: Contains `tcu.py`, a Tkinter-based update trigger panel that sends DoIP update requests to the Gateway for BCM and IVI.
 - **SETUP.md**: Step-by-step setup and run instructions.
 
 ## Features
@@ -15,9 +16,12 @@ This project simulates a multi-network vehicle architecture with a gateway ECU t
 - **Realistic UDS-over-CAN and UDS-over-DoIP stack:** Uses `python-can`, `python-can-isotp`, and `udsoncan` for CAN, and native Python sockets for DoIP (Ethernet), matching real vehicle protocol layers.
 - **Virtual CAN bus:** Uses Linux’s `vcan0` interface, which emulates a real CAN bus in software—no hardware required.
 - **DoIP simulation:** Sensor ECU provides UDS data over a TCP socket using DoIP-style framing, easily portable to real Ethernet hardware.
-- **Gateway forwarding:** The gateway receives UDS requests over CAN, forwards them to the sensor ECU over DoIP, and relays the response back to the CAN client.
-- **Threaded servers:** Both gateway and sensor ECUs use real Python threads for concurrency, similar to embedded systems.
-- **Standard UDS services:** Implements UDS service 0x22 (ReadDataByIdentifier) with correct positive and negative response formats.
+- **Gateway forwarding:** The gateway receives UDS requests over CAN/DoIP, forwards read requests to the sensor ECU over DoIP, and relays responses to requesters.
+- **Runtime update triggers from TCU:** The TCU sends UDS WriteDataByIdentifier triggers over DoIP to the Gateway:
+  - DID `0xF1A1` sets BCM polling interval to 1 second via `/tmp/bcm_update.flag`
+  - DID `0xF1A2` switches IVI temperature display from Celsius to Fahrenheit via `/tmp/ivi_update.flag`
+- **Threaded servers:** Both gateway and sensor ECUs use Python threads for concurrency.
+- **UDS services:** Service `0x22` (ReadDataByIdentifier) for sensor data and service `0x2E` (WriteDataByIdentifier) for TCU update triggers.
 
 ## How Close Is This to Real Hardware?
 
@@ -38,8 +42,8 @@ This project simulates a multi-network vehicle architecture with a gateway ECU t
 
 This project uses **two protocol stacks** bridged by the Gateway ECU:
 
-- **CAN side** (BCM ↔ Gateway): Virtual CAN bus `vcan0` → ISO-TP transport → UDS application layer
-- **IP side** (IVI ↔ Gateway ↔ Sensor ECU): TCP socket → DoIP transport → UDS application layer
+- **CAN side** (BCM ↔ Gateway): Virtual CAN bus `vcan0` -> ISO-TP transport -> UDS application layer
+- **IP side** (TCU/IVI ↔ Gateway ↔ Sensor ECU): TCP socket -> DoIP transport -> UDS application layer
 
 ### Component Roles
 
@@ -47,8 +51,9 @@ This project uses **two protocol stacks** bridged by the Gateway ECU:
 | -------------- | -------------------------------------------------- | ----------------------------------- |
 | **Sensor ECU** | Data source — generates random speed & temperature | DoIP/TCP server on port 13400       |
 | **Gateway**    | Protocol bridge — translates CAN ↔ DoIP            | ISO-TP/CAN + DoIP/TCP client/server |
-| **BCM**        | UDS client — reads vehicle speed every 100ms       | ISO-TP/CAN                          |
-| **IVI**        | UDS client + GUI — reads cabin temp every 3s       | DoIP/TCP client to Gateway          |
+| **BCM**        | UDS client — reads vehicle speed (100ms default)   | ISO-TP/CAN                          |
+| **IVI**        | UDS client — reads cabin temp every 3s (console)   | DoIP/TCP client to Gateway          |
+| **TCU**        | Update trigger UI for BCM/IVI runtime changes      | DoIP/TCP client to Gateway          |
 
 ### High-Level Sequence Diagram
 
@@ -105,26 +110,55 @@ For DID `0xF191` (cabin temperature), IVI communicates with Gateway over DoIP (T
 
 ```mermaid
 sequenceDiagram
-  participant IVI as IVI (GUI thread + reader thread)
+  participant IVI as IVI (console reader loop)
   participant GW as Gateway
   participant SENSOR as Sensor ECU
 
-  Note over IVI: Background thread calls<br/>ReadDataByIdentifier every 3s
+  Note over IVI: Polls ReadDataByIdentifier every 3s
   IVI->>GW: 22 F1 91<br/>(DID=0xF191 CabinTemp, over DoIP/TCP)
   GW->>SENSOR: DoIP[ 22 F1 91 ]
   SENSOR-->>GW: DoIP[ 62 F1 91 00 19 ]<br/>(value=25°C)
   GW-->>IVI: DoIP[ 62 F1 91 00 19 ]
 
-  Note over IVI: Uses root.after(0, update_temp, 25)<br/>to safely push update to Tkinter main thread<br/>Dashboard label shows: "Cabin Temperature: 25 °C"
+  Note over IVI: Prints: "Cabin Temperature: 25 C"<br/>After update trigger, prints Fahrenheit values
 ```
+
+### TCU Update Trigger Flow (Over DoIP)
+
+TCU provides a simple Tkinter UI and sends DoIP/UDS update triggers to Gateway using `0x2E`:
+
+```mermaid
+sequenceDiagram
+  participant TCU as TCU (Tkinter UI)
+  participant GW as Gateway
+  participant BCM as BCM
+  participant IVI as IVI
+
+  TCU->>GW: 2E F1 A1 01 (BCM update trigger)
+  GW-->>TCU: 6E F1 A1 01
+  GW->>BCM: writes /tmp/bcm_update.flag
+  BCM->>BCM: polling interval changes to 1.0s
+
+  TCU->>GW: 2E F1 A2 01 (IVI update trigger)
+  GW-->>TCU: 6E F1 A2 01
+  GW->>IVI: writes /tmp/ivi_update.flag
+  IVI->>IVI: switches C -> F display
+```
+
+### Custom Update DIDs
+
+| DID      | Trigger Source | Effect                                          |
+| -------- | -------------- | ----------------------------------------------- |
+| `0xF1A1` | TCU -> Gateway | BCM updates polling from 100ms to 1000ms        |
+| `0xF1A2` | TCU -> Gateway | IVI display switches from Celsius to Fahrenheit |
 
 ### UDS Negative Response Codes Used
 
-| NRC                    | Hex    | Meaning               | When triggered        |
-| ---------------------- | ------ | --------------------- | --------------------- |
-| serviceNotSupported    | `0x11` | Service not supported | SID is not `0x22`     |
-| requestOutOfRange      | `0x31` | DID not recognized    | Unknown DID requested |
-| incorrectMessageLength | `0x13` | Empty request         | Empty UDS payload     |
+| NRC                    | Hex    | Meaning               | When triggered                             |
+| ---------------------- | ------ | --------------------- | ------------------------------------------ |
+| serviceNotSupported    | `0x11` | Service not supported | SID is neither `0x22` nor supported `0x2E` |
+| requestOutOfRange      | `0x31` | DID not recognized    | Unknown DID requested                      |
+| incorrectMessageLength | `0x13` | Empty request         | Empty UDS payload                          |
 
 ## Run Sequence
 
@@ -145,6 +179,11 @@ sequenceDiagram
 
 3. **Start the clients:**
    Open a new terminal for each client, activate your virtual environment if needed:
+   - For TCU (update trigger UI over DoIP):
+     ```sh
+     cd tcu
+     python3 tcu.py
+     ```
    - For IVI (cabin temperature, over DoIP):
      ```sh
      cd ivi
@@ -160,6 +199,7 @@ sequenceDiagram
 
 - Always start the sensor ECU first, then the gateway, then the clients.
 - IVI communicates with the Gateway over DoIP (TCP port 15000).
+- TCU communicates with the Gateway over DoIP (TCP port 15000).
 - All components must use the same Python environment and required packages.
 
 ## Getting Started
