@@ -60,9 +60,10 @@ def main():
 
                 while True:
                     # Check for update trigger
-                    if os.path.exists("/tmp/ivi_update.flag"):
+                    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                    flag_path = os.path.join(project_root, "data", "ivi_update.flag")
+                    if os.path.exists(flag_path):
                         show_fahrenheit = True
-                        os.remove("/tmp/ivi_update.flag")
                         print("IVI: Switched to Fahrenheit display due to TCU update trigger.")
 
                     # UDS ReadDataByIdentifier for cabin temp DID 0xF191

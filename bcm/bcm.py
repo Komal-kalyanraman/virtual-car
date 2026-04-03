@@ -32,9 +32,10 @@ def main():
         sleep_time = 0.1
         while True:
             try:
-                if os.path.exists("/tmp/bcm_update.flag"):
+                project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                flag_path = os.path.join(project_root, "data", "bcm_update.flag")
+                if os.path.exists(flag_path):
                     sleep_time = 1.0
-                    os.remove("/tmp/bcm_update.flag")
                     print("BCM: Data rate changed to 1000ms due to TCU update trigger.")
                 response = client.read_data_by_identifier(DID_VEHICLE_SPEED)
                 speed = response.service_data.values[DID_VEHICLE_SPEED]

@@ -8,7 +8,8 @@ This project simulates a multi-network vehicle architecture with a gateway ECU t
 - **gateway/**: Contains `gateway.py`, which acts as a simulated vehicle gateway ECU. It receives UDS requests over CAN and forwards them to the sensor ECU over Ethernet (DoIP), then relays the response back over CAN.
 - **ivi/**: Contains `ivi.py`, which acts as a UDS client requesting cabin temperature over DoIP (Ethernet) to the Gateway and printing values to the console.
 - **bcm/**: Contains `bcm.py`, which reads vehicle speed over CAN and supports runtime update behavior via a trigger file.
-- **tcu/**: Contains `tcu.py`, a Tkinter-based update trigger panel that sends DoIP update requests to the Gateway for BCM and IVI.
+- **tcu/**: Contains `tcu.py`, a Tkinter-based update trigger panel that sends DoIP update requests to the Gateway for BCM, IVI, and TCU.
+- **data/**: Runtime trigger flag files written by the Gateway and consumed by ECUs (`bcm_update.flag`, `ivi_update.flag`, `tcu_update.flag`).
 - **SETUP.md**: Step-by-step setup and run instructions.
 
 ## Features
@@ -18,8 +19,9 @@ This project simulates a multi-network vehicle architecture with a gateway ECU t
 - **DoIP simulation:** Sensor ECU provides UDS data over a TCP socket using DoIP-style framing, easily portable to real Ethernet hardware.
 - **Gateway forwarding:** The gateway receives UDS requests over CAN/DoIP, forwards read requests to the sensor ECU over DoIP, and relays responses to requesters.
 - **Runtime update triggers from TCU:** The TCU sends UDS WriteDataByIdentifier triggers over DoIP to the Gateway:
-  - DID `0xF1A1` sets BCM polling interval to 1 second via `/tmp/bcm_update.flag`
-  - DID `0xF1A2` switches IVI temperature display from Celsius to Fahrenheit via `/tmp/ivi_update.flag`
+  - DID `0xF1A1` sets BCM polling interval to 1 second via `data/bcm_update.flag`
+  - DID `0xF1A2` switches IVI temperature display from Celsius to Fahrenheit via `data/ivi_update.flag`
+  - DID `0xF1A3` creates `data/tcu_update.flag` for TCU-side update signaling
 - **Threaded servers:** Both gateway and sensor ECUs use Python threads for concurrency.
 - **UDS services:** Service `0x22` (ReadDataByIdentifier) for sensor data and service `0x2E` (WriteDataByIdentifier) for TCU update triggers.
 
@@ -53,7 +55,7 @@ This project uses **two protocol stacks** bridged by the Gateway ECU:
 | **Gateway**    | Protocol bridge — translates CAN ↔ DoIP            | ISO-TP/CAN + DoIP/TCP client/server |
 | **BCM**        | UDS client — reads vehicle speed (100ms default)   | ISO-TP/CAN                          |
 | **IVI**        | UDS client — reads cabin temp every 3s (console)   | DoIP/TCP client to Gateway          |
-| **TCU**        | Update trigger UI for BCM/IVI runtime changes      | DoIP/TCP client to Gateway          |
+| **TCU**        | Update trigger UI for BCM/IVI/TCU runtime changes  | DoIP/TCP client to Gateway          |
 
 ### High-Level Sequence Diagram
 
@@ -136,13 +138,18 @@ sequenceDiagram
 
   TCU->>GW: 2E F1 A1 01 (BCM update trigger)
   GW-->>TCU: 6E F1 A1 01
-  GW->>BCM: writes /tmp/bcm_update.flag
+  GW->>BCM: writes data/bcm_update.flag
   BCM->>BCM: polling interval changes to 1.0s
 
   TCU->>GW: 2E F1 A2 01 (IVI update trigger)
   GW-->>TCU: 6E F1 A2 01
-  GW->>IVI: writes /tmp/ivi_update.flag
+  GW->>IVI: writes data/ivi_update.flag
   IVI->>IVI: switches C -> F display
+
+  TCU->>GW: 2E F1 A3 01 (TCU update trigger)
+  GW-->>TCU: 6E F1 A3 01
+  GW->>TCU: writes data/tcu_update.flag
+  TCU->>TCU: popup status text changes to "TCU update triggered!"
 ```
 
 ### Custom Update DIDs
@@ -151,6 +158,14 @@ sequenceDiagram
 | -------- | -------------- | ----------------------------------------------- |
 | `0xF1A1` | TCU -> Gateway | BCM updates polling from 100ms to 1000ms        |
 | `0xF1A2` | TCU -> Gateway | IVI display switches from Celsius to Fahrenheit |
+| `0xF1A3` | TCU -> Gateway | TCU update flag is set and UI shows status text |
+
+## Runtime Flag Behavior
+
+- Gateway writes trigger flags into `data/` under the project root.
+- `bcm.py` and `ivi.py` detect their flags and apply behavior changes.
+- Flags are not auto-deleted by BCM/IVI in the current code, so the changed behavior remains active.
+- `tcu.py` clears old `data/*.flag` files at startup to reset state for a fresh run.
 
 ### UDS Negative Response Codes Used
 

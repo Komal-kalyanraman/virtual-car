@@ -1,3 +1,5 @@
+import os
+import time
 import socket
 import struct
 import tkinter as tk
@@ -11,8 +13,9 @@ GW_LOGICAL_ADDR = 0x0E00
 GATEWAY_HOST = "127.0.0.1"
 GATEWAY_PORT = 15000
 
-DID_BCM_UPDATE = 0xF1A1  # Custom DID for BCM update
-DID_IVI_UPDATE = 0xF1A2  # Custom DID for IVI update
+DID_BCM_UPDATE = 0xF1A1 # BCM update trigger DID
+DID_IVI_UPDATE = 0xF1A2 # IVI update trigger DID
+DID_TCU_UPDATE = 0xF1A3 # TCU update trigger DID
 
 def build_doip_diag_frame(source_addr, target_addr, uds_payload):
     payload = struct.pack("!HH", source_addr, target_addr) + uds_payload
@@ -26,22 +29,42 @@ def send_update_trigger(did, value):
             uds_request = bytes([0x2E, (did >> 8) & 0xFF, did & 0xFF, value])
             frame = build_doip_diag_frame(TCU_LOGICAL_ADDR, GW_LOGICAL_ADDR, uds_request)
             sock.sendall(frame)
-            # Read response (ignore content for this demo)
             sock.recv(1024)
     except Exception as e:
         print(f"TCU: Error sending update: {e}")
 
 def main():
+    # Remove previous flag files in data folder
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    data_dir = os.path.join(project_root, "data")
+    for flag in ["bcm_update.flag", "ivi_update.flag", "tcu_update.flag"]:
+        flag_path = os.path.join(data_dir, flag)
+        if os.path.exists(flag_path):
+            os.remove(flag_path)
+
     root = tk.Tk()
     root.title("TCU Update Trigger")
 
     tk.Label(root, text="TCU Update Panel", font=("Arial", 18)).pack(pady=10)
 
-    tk.Button(root, text="Update BCM (100ms → 1 second)", font=("Arial", 14),
-              command=lambda: send_update_trigger(DID_BCM_UPDATE, 1)).pack(pady=10)
+    status_label = tk.Label(root, text="", font=("Arial", 12), fg="blue")
+    status_label.pack(pady=5)
 
-    tk.Button(root, text="Update IVI (Celsius → Fahrenheit)", font=("Arial", 14),
-              command=lambda: send_update_trigger(DID_IVI_UPDATE, 1)).pack(pady=10)
+    bcm_btn = tk.Button(root, text="Update BCM (100ms → 1 second)", font=("Arial", 14),
+                        command=lambda: send_update_trigger(DID_BCM_UPDATE, 1))
+    bcm_btn.pack(pady=10)
+
+    ivi_btn = tk.Button(root, text="Update IVI (Celsius → Fahrenheit)", font=("Arial", 14),
+                        command=lambda: send_update_trigger(DID_IVI_UPDATE, 1))
+    ivi_btn.pack(pady=10)
+
+    def tcu_update_action():
+        send_update_trigger(DID_TCU_UPDATE, 1)
+        status_label.config(text="TCU update triggered!")
+
+    tcu_btn = tk.Button(root, text="Update TCU (Show Message)", font=("Arial", 14),
+                        command=tcu_update_action)
+    tcu_btn.pack(pady=10)
 
     root.mainloop()
 
