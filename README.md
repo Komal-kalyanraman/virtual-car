@@ -47,6 +47,14 @@ This project uses **two protocol stacks** bridged by the Gateway ECU:
 - **CAN side** (BCM ↔ Gateway): Virtual CAN bus `vcan0` -> ISO-TP transport -> UDS application layer
 - **IP side** (TCU/IVI ↔ Gateway ↔ Sensor ECU): TCP socket -> DoIP transport -> UDS application layer
 
+### Network Architecture Diagram
+
+![Virtual Car Architecture](docs/virtual-car.png)
+
+The diagram shows the Gateway ECU as the central bridge between two diagnostic networks. TCU, IVI, and Sensors communicate with Gateway over UDS/DoIP (Ethernet), while BCM communicates with Gateway over UDS/CAN. This reflects the same protocol split used in the simulation runtime: DoIP on the IP side and ISO-TP/UDS on the CAN side.
+
+The Agents are present in ECUs which can be updated via OTA and a Client is present in TCU which communicate with OTA cloud server.
+
 ### Component Roles
 
 | Component      | Role                                               | Protocol                            |
