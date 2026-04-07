@@ -18,6 +18,12 @@ class UInt16DidCodec(DidCodec):
         return 2
 
 def main():
+    # Remove previous BCM update flag file at startup
+    data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+    flag_path = os.path.join(data_dir, "bcm_update.flag")
+    if os.path.exists(flag_path):
+        os.remove(flag_path)
+
     address = isotp.Address(
         isotp.AddressingMode.Normal_11bits,
         txid=0x7E0,
@@ -32,8 +38,7 @@ def main():
         sleep_time = 0.1
         while True:
             try:
-                project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                flag_path = os.path.join(project_root, "data", "bcm_update.flag")
+                flag_path = os.path.join(data_dir, "bcm_update.flag")
                 if os.path.exists(flag_path):
                     sleep_time = 1.0
                     print("BCM: Data rate changed to 1000ms due to TCU update trigger.")

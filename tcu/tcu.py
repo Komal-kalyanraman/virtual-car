@@ -36,11 +36,10 @@ def send_update_trigger(did, value):
 def main():
     # Remove previous flag files in data folder
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    data_dir = os.path.join(project_root, "data")
-    for flag in ["bcm_update.flag", "ivi_update.flag", "tcu_update.flag"]:
-        flag_path = os.path.join(data_dir, flag)
-        if os.path.exists(flag_path):
-            os.remove(flag_path)
+    data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+    flag_path = os.path.join(data_dir, "tcu_update.flag")
+    if os.path.exists(flag_path):
+        os.remove(flag_path)
 
     root = tk.Tk()
     root.title("TCU Update Trigger")

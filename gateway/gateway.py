@@ -90,15 +90,15 @@ def process_uds_request(uds_request):
     if sid == 0x2E and len(uds_request) >= 4:
         did = (uds_request[1] << 8) | uds_request[2]
         if did == 0xF1A1:  # BCM update
-            with open("../data/bcm_update.flag", "w") as f:
+            with open("../bcm/data/bcm_update.flag", "w") as f:
                 f.write("1")
             return bytes([0x6E, uds_request[1], uds_request[2], uds_request[3]])
         elif did == 0xF1A2:  # IVI update
-            with open("../data/ivi_update.flag", "w") as f:
+            with open("../ivi/data/ivi_update.flag", "w") as f:
                 f.write("1")
             return bytes([0x6E, uds_request[1], uds_request[2], uds_request[3]])
         elif did == 0xF1A3:  # TCU update
-            with open("../data/tcu_update.flag", "w") as f:
+            with open("../tcu/data/tcu_update.flag", "w") as f:
                 f.write("1")
             return bytes([0x6E, uds_request[1], uds_request[2], uds_request[3]])
 

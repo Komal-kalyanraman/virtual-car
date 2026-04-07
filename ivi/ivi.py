@@ -51,6 +51,12 @@ def recv_doip_diag(sock):
     return source_addr, target_addr, uds_payload
 
 def main():
+    # Remove previous IVI update flag file at startup
+    data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+    flag_path = os.path.join(data_dir, "ivi_update.flag")
+    if os.path.exists(flag_path):
+        os.remove(flag_path)
+
     show_fahrenheit = False
     while True:
         try:
@@ -60,8 +66,7 @@ def main():
 
                 while True:
                     # Check for update trigger
-                    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                    flag_path = os.path.join(project_root, "data", "ivi_update.flag")
+                    flag_path = os.path.join(data_dir, "ivi_update.flag")
                     if os.path.exists(flag_path):
                         show_fahrenheit = True
                         print("IVI: Switched to Fahrenheit display due to TCU update trigger.")
