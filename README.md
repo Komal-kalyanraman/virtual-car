@@ -6,8 +6,12 @@ This project simulates a multi-network vehicle architecture with a gateway ECU t
 
 - **sensor-ecu/**: Contains `sensor.py`, which acts as a sensor ECU providing vehicle speed and cabin temperature data as a UDS server over DoIP (Ethernet).
 - **gateway/**: Contains `gateway.py`, which acts as a simulated vehicle gateway ECU. It receives UDS requests over CAN and forwards them to the sensor ECU over Ethernet (DoIP), then relays the response back over CAN.
-- **ivi/**: Contains `ivi.py`, which acts as a UDS client requesting cabin temperature over DoIP (Ethernet) to the Gateway and printing values to the console.
-- **bcm/**: Contains `bcm.py`, which reads vehicle speed over CAN and supports runtime update behavior via a trigger file.
+- **ivi/**:
+  - `ivi.py`: Python UDS client requesting cabin temperature over DoIP (Ethernet) to the Gateway and printing values to the console.
+  - `ivi.c`: Native C client for UDS-over-DoIP, functionally equivalent to `ivi.py` but implemented in C for direct hardware/embedded use.
+- **bcm/**:
+  - `bcm.py`: Python UDS client reading vehicle speed over CAN and supporting runtime update behavior via a trigger file.
+  - `bcm.cpp`: Native C++17 client for UDS-over-CAN (ISO-TP), functionally equivalent to `bcm.py` but implemented in C++ for direct hardware/embedded use.
 - **tcu/**: Contains `tcu.py`, a Tkinter-based update trigger panel that sends DoIP update requests to the Gateway for BCM, IVI, and TCU.
 - **bcm/data/**: Contains BCM runtime trigger flag files such as `bcm_update.flag`.
 - **ivi/data/**: Contains IVI runtime trigger flag files such as `ivi_update.flag`.
@@ -16,7 +20,9 @@ This project simulates a multi-network vehicle architecture with a gateway ECU t
 
 ## Features
 
-- **Realistic UDS-over-CAN and UDS-over-DoIP stack:** Uses `python-can`, `python-can-isotp`, and `udsoncan` for CAN, and native Python sockets for DoIP (Ethernet), matching real vehicle protocol layers.
+- **Realistic UDS-over-CAN and UDS-over-DoIP stack:**
+  - Python clients use `python-can`, `python-can-isotp`, and `udsoncan` for CAN, and native Python sockets for DoIP (Ethernet).
+  - Native clients (`bcm.cpp`, `ivi.c`) use Linux SocketCAN and standard sockets for direct hardware/embedded deployment.
 - **Virtual CAN bus:** Uses Linux’s `vcan0` interface, which emulates a real CAN bus in software—no hardware required.
 - **DoIP simulation:** Sensor ECU provides UDS data over a TCP socket using DoIP-style framing, easily portable to real Ethernet hardware.
 - **Gateway forwarding:** The gateway receives UDS requests over CAN/DoIP, forwards read requests to the sensor ECU over DoIP, and relays responses to requesters.
@@ -206,22 +212,36 @@ sequenceDiagram
    ```
 
 3. **Start the clients:**
-   Open a new terminal for each client, activate your virtual environment if needed:
+   Open a new terminal for each client. You can use either the Python or native (C/C++) client for IVI and BCM:
    - For TCU (update trigger UI over DoIP):
      ```sh
      cd tcu
      python3 tcu.py
      ```
    - For IVI (cabin temperature, over DoIP):
-     ```sh
-     cd ivi
-     python3 ivi.py
-     ```
+     - **Python:**
+       ```sh
+       cd ivi
+       python3 ivi.py
+       ```
+     - **Native C:**
+       ```sh
+       cd ivi
+       gcc -std=c17 -Wall -Wextra -o ivi ivi.c
+       ./ivi
+       ```
    - For BCM (vehicle speed, CAN):
-     ```sh
-     cd bcm
-     python3 bcm.py
-     ```
+     - **Python:**
+       ```sh
+       cd bcm
+       python3 bcm.py
+       ```
+     - **Native C++:**
+       ```sh
+       cd bcm
+       g++ -std=c++17 -o bcm bcm.cpp -lpthread
+       sudo ./bcm
+       ```
 
 **Note:**
 

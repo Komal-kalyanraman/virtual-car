@@ -12,6 +12,12 @@
 #include <sys/stat.h>
 #include <limits.h>
 #include <libgen.h>
+#include <stdbool.h>
+#include <sys/time.h>
+
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
 
 #define DOIP_VERSION 0x02
 #define DOIP_INVERSE_VERSION 0xFD
@@ -63,8 +69,17 @@ int check_update_flag(const char *flag_path) {
     return stat(flag_path, &st) == 0;
 }
 
-int main() {
-    int show_fahrenheit = 0;
+// Set socket timeout in seconds
+void set_socket_timeout(int sock, int seconds) {
+    struct timeval tv;
+    tv.tv_sec = seconds;
+    tv.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof tv);
+}
+
+int main(void) {
+    bool show_fahrenheit = false;
     char flag_path[PATH_MAX];
     char exe_path[PATH_MAX];
     ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
@@ -76,7 +91,7 @@ int main() {
     char *exe_dir = dirname(exe_path);
     snprintf(flag_path, sizeof(flag_path), "%s/data/ivi_update.flag", exe_dir);
 
-    /* Remove previous IVI update flag file at startup */
+    // Remove previous IVI update flag file at startup
     if (check_update_flag(flag_path)) {
         unlink(flag_path);
     }
@@ -88,6 +103,8 @@ int main() {
             sleep(1);
             continue;
         }
+
+        set_socket_timeout(sock, 2);
 
         struct sockaddr_in addr;
         addr.sin_family = AF_INET;
@@ -106,7 +123,7 @@ int main() {
         while (1) {
             // Check for update trigger
             if (check_update_flag(flag_path)) {
-                show_fahrenheit = 1;
+                show_fahrenheit = true;
                 printf("IVI: Switched to Fahrenheit display due to TCU update trigger.\n");
             }
 
@@ -124,26 +141,31 @@ int main() {
             uint8_t header[8];
             if (recv_exact(sock, header, 8) < 0) {
                 perror("recv header");
+                printf("Cabin Temperature: --\n");
                 break;
             }
             if (header[0] != DOIP_VERSION || header[1] != DOIP_INVERSE_VERSION) {
                 fprintf(stderr, "Invalid DoIP version\n");
+                printf("Cabin Temperature: --\n");
                 break;
             }
             uint16_t payload_type = (header[2] << 8) | header[3];
             if (payload_type != DOIP_PAYLOAD_DIAG_MSG) {
                 fprintf(stderr, "Unsupported payload type: 0x%04X\n", payload_type);
+                printf("Cabin Temperature: --\n");
                 break;
             }
             uint32_t payload_len = (header[4] << 24) | (header[5] << 16) | (header[6] << 8) | header[7];
             if (payload_len < 4 || payload_len > 32) {
                 fprintf(stderr, "Payload length error\n");
+                printf("Cabin Temperature: --\n");
                 break;
             }
 
             uint8_t payload[32];
             if (recv_exact(sock, payload, payload_len) < 0) {
                 perror("recv payload");
+                printf("Cabin Temperature: --\n");
                 break;
             }
 
@@ -152,9 +174,9 @@ int main() {
             uint8_t *uds_resp = payload + 4;
             size_t uds_len = payload_len - 4;
 
-            int ok = (src == GW_LOGICAL_ADDR) && (dst == IVI_LOGICAL_ADDR) &&
-                     (uds_len >= 5) && (uds_resp[0] == 0x62) &&
-                     (uds_resp[1] == 0xF1) && (uds_resp[2] == 0x91);
+            bool ok = (src == GW_LOGICAL_ADDR) && (dst == IVI_LOGICAL_ADDR) &&
+                      (uds_len >= 5) && (uds_resp[0] == 0x62) &&
+                      (uds_resp[1] == 0xF1) && (uds_resp[2] == 0x91);
 
             if (ok) {
                 int temp = (uds_resp[3] << 8) | uds_resp[4];

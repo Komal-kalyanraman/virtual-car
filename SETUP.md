@@ -5,8 +5,13 @@ This project simulates a vehicle gateway and IVI (In-Vehicle Infotainment) syste
 ## Prerequisites
 
 - Python 3.8+
-- Linux OS (for virtual CAN)
-- `python-can`, `python-can-isotp`, and `udsoncan` Python packages
+- Linux OS (for virtual CAN and native C/C++ clients)
+- For Python clients: `python-can`, `python-can-isotp`, and `udsoncan` Python packages
+- For native C/C++ clients:
+  - GCC (for compiling C/C++ code)
+  - Linux kernel headers (for SocketCAN/ISOTP)
+  - SocketCAN and ISO-TP kernel modules (`can`, `vcan`, `can-isotp`)
+  - `can-utils` package for CAN interface management
 
 ## Setup Instructions
 
@@ -32,6 +37,16 @@ pip install git+https://github.com/pylessard/python-can-isotp.git
 pip install udsoncan
 ```
 
+### 3b. Install Native Client Prerequisites (C/C++)
+
+```sh
+sudo apt update
+sudo apt install build-essential linux-headers-$(uname -r) can-utils
+sudo modprobe can
+sudo modprobe vcan
+sudo modprobe can-isotp
+```
+
 ### 4. Set Up the Virtual CAN Interface
 
 ```sh
@@ -51,12 +66,41 @@ python gateway.py
 
 Open a new terminal, activate the virtual environment, then:
 
+**Python client:**
+
 ```sh
 cd ivi
-python ivi.py
+python3 ivi.py
 ```
 
-### 7. Installl Tkinter across PC
+**Native C client:**
+
+```sh
+cd ivi
+gcc -std=c17 -Wall -Wextra -o ivi ivi.c
+./ivi
+```
+
+### 7. Run the BCM (UDS Client)
+
+Open a new terminal:
+
+**Python client:**
+
+```sh
+cd bcm
+python3 bcm.py
+```
+
+**Native C++ client:**
+
+```sh
+cd bcm
+g++ -std=c++17 -o bcm bcm.cpp -lpthread
+sudo ./bcm
+```
+
+### 8. Install Tkinter (for TCU UI)
 
 ```sh
 sudo apt-get install python3-tk
